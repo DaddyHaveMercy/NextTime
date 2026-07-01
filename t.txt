@@ -1,0 +1,195 @@
+
+## Modifications dans `AGENTS.md`
+
+### 1. Renommer la section
+
+L'ancienne section `## Diagram publication (auto, on every run)` devient `## Diagrams publication (auto, on every run)` (pluriel). Le reste des règles s'applique aux **deux** diagrammes.
+
+### 2. Ajouter le flowchart dans la sous-section "Conventions"
+
+Remplace le bloc "Format on the page" par celui-ci :
+
+```markdown
+- Format on the page — TWO diagrams stacked in this order:
+  1. An H2 heading `Vue d'ensemble de la procédure`
+     followed by a Confluence HTML macro embedding a flowchart Mermaid
+     (macro identifier: `pre class="mermaid aidpgen-flowchart"`).
+  2. An H2 heading `Procédure de l'agent (diagramme de séquence)`
+     followed by a Confluence HTML macro embedding the sequence diagram
+     (macro identifier: `pre class="mermaid aidpgen-sequence"`).
+- Both macros load Mermaid **once** via a single `<script type="module">`
+  at the bottom of the second macro — Mermaid auto-detects and renders every
+  `<pre class="mermaid">` on the page.
+- The two class-suffixes (`aidpgen-flowchart` and `aidpgen-sequence`) are how
+  the agent uniquely identifies each of its own diagrams for the update logic.
+- Both diagrams MUST cover the SAME procedure — same Steps, same Gates,
+  same error branches — just at different levels of detail.
+```
+
+### 3. Nouveau storage-format payload
+
+Remplace le bloc "Storage-format payload" par ceci :
+
+````markdown
+### Storage-format payload
+
+The Confluence page body must contain these two macros back-to-back
+(only the Mermaid texts change from one run to the next):
+
+```xml
+<h2>Vue d'ensemble de la procédure</h2>
+<ac:structured-macro ac:name="html">
+  <ac:plain-text-body><![CDATA[
+<pre class="mermaid aidpgen-flowchart">
+flowchart TD
+    ...the full canonical flowchart template below...
+</pre>
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<h2>Procédure de l'agent (diagramme de séquence)</h2>
+<ac:structured-macro ac:name="html">
+  <ac:plain-text-body><![CDATA[
+<pre class="mermaid aidpgen-sequence">
+sequenceDiagram
+    ...the full canonical sequence template already documented...
+</pre>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true });
+</script>
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
+```
+
+The Mermaid `<script>` sits inside the second macro only (not both), because
+Mermaid initialised once on the page detects and renders every `<pre class="mermaid">`
+regardless of any additional class suffix.
+````
+
+### 4. Comparison and update logic (mise à jour)
+
+Cette section doit maintenant traiter les deux diagrammes indépendamment. Remplace-la par :
+
+```markdown
+### Comparison and update logic
+
+For each of the two diagrams (identified by class suffix
+`aidpgen-flowchart` and `aidpgen-sequence`) independently:
+
+1. Generate the current Mermaid text from this AGENTS.md.
+2. In the page body returned at Step 4, locate the existing diagram:
+   - Find `<ac:structured-macro ac:name="html">` whose CDATA body contains
+     `<pre class="mermaid <suffix>">` where `<suffix>` is the one being
+     compared.
+   - Extract the text **between** the opening `<pre ...>` and the closing
+     `</pre>` (ignore the trailing `<script>` if any).
+3. Normalize both:
+   - Strip leading/trailing whitespace.
+   - Collapse any run of whitespace characters into a single space.
+4. Compare. If equal → mark this diagram "unchanged". If different (or no
+   existing macro found) → mark this diagram "needs update".
+
+After both diagrams have been evaluated:
+
+- If BOTH are unchanged → print `Diagrams unchanged, not republished.` and
+  proceed to the next step. Do NOT call the update-page tool.
+- If AT LEAST ONE needs update → build the new page body by replacing the
+  affected macro(s) in place (leave the unaffected macro exactly as it was
+  on the server, to preserve any manual edit the user may have made to the
+  section header). If a macro is missing entirely, prepend the missing
+  section at the top of the body, respecting the order above.
+- Call the `DevopsProdITG` Confluence update-page tool once with the full
+  new body.
+
+Confirm with:
+`Diagrammes publiés sur Confluence: <list of updated ones>` — e.g.
+`flowchart` or `sequence` or `flowchart + sequence`.
+
+If the update tool returns an error, apply CRITICAL failure handling.
+```
+
+### 5. Canonical flowchart template
+
+Ajoute cette nouvelle sous-section, juste avant l'existante "Canonical Mermaid template" (qui devient "Canonical sequence diagram template") :
+
+````markdown
+### Canonical flowchart template
+
+Use this exact shape for the global view. Steps and Gates are grouped into
+lanes; decision diamonds represent every choice point; red terminals mark
+CRITICAL stops. Adapt the Step descriptions to match the current AGENTS.md
+but keep the structure and node identifiers stable across runs.
+
+```
+flowchart TD
+    Start([User: traite le ticket]) --> S0
+
+    subgraph Setup[" "]
+        direction TB
+        S0[Step 0<br/>Plan]
+        G1{{Gate 1<br/>Go / NoGo}}
+        S0 --> G1
+    end
+    G1 -- NoGo --> AbortEarly([Procédure annulée])
+    G1 -- Go --> S1
+
+    subgraph JiraOps[JIRA]
+        direction TB
+        S1[Step 1<br/>Check status]
+        StatusCheck{{Backlog<br/>or To Do?}}
+        S2[Step 2<br/>→ In Progress]
+        S3[Step 3<br/>Get issue + page_id]
+        S1 --> StatusCheck
+        StatusCheck -- No --> AbortStatus([Refus: mauvais statut])
+        StatusCheck -- Yes --> S2 --> S3
+    end
+    S3 --> S4
+
+    subgraph ConfluenceOps[Confluence]
+        direction TB
+        S4[Step 4<br/>Fetch page]
+        S5[Step 5<br/>Publish diagrams<br/>if changed]
+        S6[Step 6<br/>Build config.yaml]
+        S7[Step 7<br/>Download Excel]
+        S4 --> S5 --> S6 --> S7
+    end
+    S6 -. failure .-> CritStop
+    S7 -. HTML or 0 files .-> CritStop
+
+    S7 --> S8[Step 8<br/>Validate specs]
+    S8 -. any FAIL .-> CritStop
+    S8 --> G2{{Gate 2<br/>Analysis review}}
+    G2 -- NoGo --> AbortMid([Arrêt: ticket In Progress])
+    G2 -- Go --> S10
+
+    subgraph Generation[SQL generation]
+        direction TB
+        S10[Step 10<br/>Run v2 + patch<br/>VARCHAR + COALESCE]
+        S11[Step 11<br/>Starburst<br/>integration test]
+        S10 --> S11
+    end
+    S10 -. non-zero exit .-> CritStop
+    S11 -. exit 2 .-> CritStop
+    S11 --> G3
+
+    G3{{Gate 3<br/>SQL + test review}}
+    G3 -- NoGo --> AbortLate([Arrêt: ticket In Progress])
+    G3 -- Go --> S13[Step 13<br/>JIRA → Done]
+    S13 --> S14[Step 14<br/>Final summary]
+    S14 --> Done([Ticket traité])
+
+    CritStop([CRITICAL failure<br/>report + wait for user])
+
+    classDef gate fill:#fff3cd,stroke:#856404,stroke-width:2px;
+    classDef stop fill:#f8d7da,stroke:#721c24,stroke-width:2px;
+    classDef done fill:#d4edda,stroke:#155724,stroke-width:2px;
+    class G1,G2,G3,StatusCheck gate
+    class AbortEarly,AbortStatus,AbortMid,AbortLate,CritStop stop
+    class Done done
+```
+
+### Canonical sequence diagram template
+
+[…existing content of the sequence template stays here unchanged…]
+````
